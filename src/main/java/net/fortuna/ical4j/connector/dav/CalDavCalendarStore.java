@@ -107,6 +107,11 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
         this.prodId = prodId;
     }
 
+    public CalDavCalendarStore(String prodId, URL url, PathResolver pathResolver, String userId) {
+        super(url, pathResolver, userId);
+        this.prodId = prodId;
+    }
+
     /**
      * {@inheritDoc}
      */
@@ -178,7 +183,12 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
     }
 
     public String findCalendarHomeSet() throws ParserConfigurationException, IOException, DavException {
-        String propfindUri = getHostURL() + pathResolver.getPrincipalPath(getUserName());
+        String propfindUri;
+        if (pathResolver.equals(PathResolver.ICLOUD)) {
+            propfindUri = getHostURL() + pathResolver.getPrincipalPath(getUserId());
+        } else {
+            propfindUri = getHostURL() + pathResolver.getPrincipalPath(getUserName());
+        }
         return findCalendarHomeSet(propfindUri);
     }
 
@@ -195,7 +205,8 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
     protected String findCalendarHomeSet(String propfindUri) throws IOException, DavException {
         DavPropertyNameSet principalsProps = new DavPropertyNameSet();
         principalsProps.add(CalDavPropertyName.CALENDAR_HOME_SET);
-        principalsProps.add(DavPropertyName.DISPLAYNAME);
+        // DISPLAYNAME doesn't work for iCloud
+//        principalsProps.add(DavPropertyName.DISPLAYNAME);
 
         HttpPropfind method = new HttpPropfind(propfindUri, principalsProps, 0);
         PropFindResponseHandler responseHandler = new PropFindResponseHandler(method);
@@ -215,17 +226,23 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
     public List<CalDavCalendarCollection> getCollections() throws ObjectStoreException, ObjectNotFoundException {
         try {
             String calHomeSetUri = findCalendarHomeSet();
+//            String calHomeSetUri = "/1054618685/calendars/";
             if (calHomeSetUri == null) {
                 throw new ObjectNotFoundException("No calendar-home-set attribute found for the user");
             }
-            String urlForcalendarHomeSet = getHostURL() + calHomeSetUri;
+            String urlForcalendarHomeSet;
+            if (calHomeSetUri.indexOf("http") > -1) {
+                urlForcalendarHomeSet = calHomeSetUri;
+            } else {
+                urlForcalendarHomeSet = getHostURL() + calHomeSetUri;
+            }
             return getCollectionsForHomeSet(this, urlForcalendarHomeSet);
         } catch (DavException de) {
             throw new ObjectStoreException(de);
         } catch (IOException ioe) {
             throw new ObjectStoreException(ioe);
-        } catch (ParserConfigurationException pce) {
-            throw new ObjectStoreException(pce);
+        } catch (ParserConfigurationException e) {
+            throw new RuntimeException(e);
         }
     }
     
