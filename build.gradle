@@ -11,9 +11,10 @@ plugins {
 
 repositories {
     mavenCentral()
-    // sonatype snapshots
+    maven { url 'https://plugins.gradle.org/m2/' }
     maven {
-        url 'https://oss.sonatype.org/content/repositories/snapshots/'
+        name = 'vhpfa.replica'
+        url = 'https://repo.fatace.xyz/repository/maven-releases'
     }
 }
 
@@ -129,13 +130,15 @@ publishing {
 
     repositories {
         maven {
-            name = "OSSRH"
-            url = !isReleaseVersion ? "https://oss.sonatype.org/content/repositories/snapshots/" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+            name = 'vhpfa.replica'
+            url = 'https://repo.fatace.xyz/repository/maven-releases'
             credentials {
                 username = System.getenv("MAVEN_USERNAME")
                 password = System.getenv("MAVEN_PASSWORD")
             }
         }
+        mavenLocal()
+
     }
 }
 
