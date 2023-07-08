@@ -47,6 +47,7 @@ import net.fortuna.ical4j.model.parameter.CuType;
 import net.fortuna.ical4j.model.property.*;
 import net.fortuna.ical4j.util.FixedUidGenerator;
 import net.fortuna.ical4j.util.UidGenerator;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.HttpPost;
@@ -74,6 +75,7 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -104,6 +106,11 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
      */
     public CalDavCalendarStore(String prodId, URL url, PathResolver pathResolver) {
         super(url, pathResolver);
+        this.prodId = prodId;
+    }
+
+    public CalDavCalendarStore(String prodId, URL url, PathResolver pathResolver, String userId) {
+        super(url, pathResolver, userId);
         this.prodId = prodId;
     }
 
@@ -178,7 +185,12 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
     }
 
     public String findCalendarHomeSet() throws ParserConfigurationException, IOException, DavException {
-        String propfindUri = getHostURL() + pathResolver.getPrincipalPath(getUserName());
+        String propfindUri;
+        if (pathResolver.equals(PathResolver.ICLOUD)) {
+            propfindUri = getHostURL() + pathResolver.getPrincipalPath(getUserId());
+        } else {
+            propfindUri = getHostURL() + pathResolver.getPrincipalPath(getUserName());
+        }
         return findCalendarHomeSet(propfindUri);
     }
 
@@ -195,7 +207,8 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
     protected String findCalendarHomeSet(String propfindUri) throws IOException, DavException {
         DavPropertyNameSet principalsProps = new DavPropertyNameSet();
         principalsProps.add(CalDavPropertyName.CALENDAR_HOME_SET);
-        principalsProps.add(DavPropertyName.DISPLAYNAME);
+        // DISPLAYNAME doesn't work for iCloud
+//        principalsProps.add(DavPropertyName.DISPLAYNAME);
 
         HttpPropfind method = new HttpPropfind(propfindUri, principalsProps, 0);
         PropFindResponseHandler responseHandler = new PropFindResponseHandler(method);
@@ -215,17 +228,23 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
     public List<CalDavCalendarCollection> getCollections() throws ObjectStoreException, ObjectNotFoundException {
         try {
             String calHomeSetUri = findCalendarHomeSet();
+//            String calHomeSetUri = "/1054618685/calendars/";
             if (calHomeSetUri == null) {
                 throw new ObjectNotFoundException("No calendar-home-set attribute found for the user");
             }
-            String urlForcalendarHomeSet = getHostURL() + calHomeSetUri;
+            String urlForcalendarHomeSet;
+            if (calHomeSetUri.indexOf("http") > -1) {
+                urlForcalendarHomeSet = calHomeSetUri;
+            } else {
+                urlForcalendarHomeSet = getHostURL() + calHomeSetUri;
+            }
             return getCollectionsForHomeSet(this, urlForcalendarHomeSet);
         } catch (DavException de) {
             throw new ObjectStoreException(de);
         } catch (IOException ioe) {
             throw new ObjectStoreException(ioe);
-        } catch (ParserConfigurationException pce) {
-            throw new ObjectStoreException(pce);
+        } catch (ParserConfigurationException e) {
+            throw new RuntimeException(e);
         }
     }
     
@@ -444,13 +463,23 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
     }
     
     protected String findInboxOrOutbox(DavPropertyName type) throws ParserConfigurationException, IOException, DavException {
-        String propfindUri = getClient().hostConfiguration.toURI() + pathResolver.getPrincipalPath(getUserName());
+        String propfindUri;
+        if (pathResolver.equals(PathResolver.ICLOUD)) {
+            propfindUri = getClient().hostConfiguration.toURI() + pathResolver.getPrincipalPath(getUserId());
+        } else {
+            propfindUri = getClient().hostConfiguration.toURI() + pathResolver.getPrincipalPath(getUserName());
+        }
 
         DavPropertyNameSet principalsProps = new DavPropertyNameSet();
         principalsProps.add(type);
 
         HttpPropfind method = new HttpPropfind(propfindUri, principalsProps, 0);
-        RequestConfig config = RequestConfig.copy(method.getConfig()).setAuthenticationEnabled(true).build();
+        RequestConfig config;
+        if (method.getConfig() == null) {
+            config = RequestConfig.custom().setAuthenticationEnabled(true).build();
+        } else {
+            config = RequestConfig.copy(method.getConfig()).setAuthenticationEnabled(true).build();
+        }
         method.setConfig(config);
 
         PropFindResponseHandler responseHandler = new PropFindResponseHandler(method);
@@ -465,12 +494,17 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
      * @author probert
      */
     public ArrayList<ScheduleResponse> findFreeBusyInfoForAttendees(Organizer organizer, ArrayList<Attendee> attendees,
-            DtStart startTime, DtEnd endTime) throws ParserConfigurationException, IOException, DavException,
+            DtStart startTime, DtEnd endTime, String calendarURI) throws ParserConfigurationException, IOException, DavException,
             ParseException, ParserException, SAXException {
         Random ramdomizer = new Random();
         ArrayList<ScheduleResponse> responses = new ArrayList<ScheduleResponse>();
 
-        HttpPost postMethod = new HttpPost(findScheduleOutbox());
+        HttpPost postMethod;
+        if (calendarURI != null) {
+            postMethod = new HttpPost(calendarURI);
+        } else {
+            postMethod = new HttpPost(findScheduleOutbox());
+        }
         postMethod.addHeader(DavConstants.HEADER_CONTENT_TYPE, "text/calendar; charset=utf-8");
 
         Calendar calendar = new Calendar();
@@ -507,17 +541,47 @@ public final class CalDavCalendarStore extends AbstractDavObjectStore<CalDavCale
         postMethod.setEntity(new StringEntity(calendar.toString()));
         HttpResponse httpResponse = getClient().execute(postMethod);
         if (httpResponse.getStatusLine().getStatusCode() < 300) {
-            DocumentBuilderFactory xmlFactory = DocumentBuilderFactory.newInstance();
-            xmlFactory.setNamespaceAware(true);
-            DocumentBuilder xmlBuilder = xmlFactory.newDocumentBuilder();
-            Document xmlDoc = xmlBuilder.parse(postMethod.getEntity().getContent());
-            NodeList nodes = xmlDoc.getElementsByTagNameNS(CalDavConstants.CALDAV_NAMESPACE.getURI(),
-                    DavPropertyName.XML_RESPONSE);
-            for (int nodeItr = 0; nodeItr < nodes.getLength(); nodeItr++) {
-                responses.add(new ScheduleResponse((Element) nodes.item(nodeItr)));
+            try {
+                DocumentBuilderFactory xmlFactory = DocumentBuilderFactory.newInstance();
+                xmlFactory.setNamespaceAware(true);
+                DocumentBuilder xmlBuilder = xmlFactory.newDocumentBuilder();
+                Document xmlDoc = xmlBuilder.parse(postMethod.getEntity().getContent());
+                NodeList nodes = xmlDoc.getElementsByTagNameNS(CalDavConstants.CALDAV_NAMESPACE.getURI(),
+                        DavPropertyName.XML_RESPONSE);
+                for (int nodeItr = 0; nodeItr < nodes.getLength(); nodeItr++) {
+                    responses.add(new ScheduleResponse((Element) nodes.item(nodeItr)));
+                }
+            } catch (Exception e) {
+                MultiStatus multiStatus;
+                try {
+                    Document doc = getResponseBodyAsDocument(postMethod.getEntity());
+                    multiStatus = MultiStatus.createFromXml(doc.getDocumentElement());
+                } catch (IOException ex) {
+                    throw new DavException(httpResponse.getStatusLine().getStatusCode(), ex);
+                }
+                MultiStatusResponse[] resp = multiStatus.getResponses();
             }
         }
         return responses;
+    }
+
+    private Document getResponseBodyAsDocument(HttpEntity entity) throws IOException {
+
+        if (entity == null) {
+            return null;
+        } else {
+            // read response and try to build a xml document
+            InputStream in = entity.getContent();
+            try {
+                return DomUtil.parseDocument(in);
+            } catch (ParserConfigurationException ex) {
+                throw new IOException("XML parser configuration error", ex);
+            } catch (SAXException ex) {
+                throw new IOException("XML parsing error", ex);
+            } finally {
+                in.close();
+            }
+        }
     }
     
     public List<Attendee> getIndividuals(String nameToSearch) throws ParserConfigurationException, IOException, DavException, URISyntaxException {

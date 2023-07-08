@@ -285,6 +285,10 @@ public abstract class AbstractDavObjectCollection<T> implements ObjectCollection
                     P result = type.newInstance();
                     if (value instanceof Collection<?>) {
                         ((Collection<?>) result).addAll((Collection) value);
+                    } else {
+                        // doesn't look like a collection for Apple's iCloud
+                        // might just be a single node
+                        ((Collection) result).add(value);
                     }
                     return result;
                 }

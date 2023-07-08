@@ -86,8 +86,9 @@ public enum PathResolver {
 
     ORACLE_CS("/dav/principals/%s/", "/dav/home/%s/"),
     
-    GENERIC("%s", "%s");
+    GENERIC("%s", "%s"),
 
+    ICLOUD("/%s/principal", "");
 
     private final String userPathBase;
 

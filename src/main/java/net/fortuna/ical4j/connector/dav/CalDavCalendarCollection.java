@@ -51,6 +51,8 @@ import net.fortuna.ical4j.model.ConstraintViolationException;
 import net.fortuna.ical4j.model.DateTime;
 import net.fortuna.ical4j.model.property.Uid;
 import net.fortuna.ical4j.util.Calendars;
+import org.apache.commons.logging.LogFactory;
+import org.apache.http.Header;
 import org.apache.http.HttpResponse;
 import org.apache.jackrabbit.webdav.DavConstants;
 import org.apache.jackrabbit.webdav.*;
@@ -82,6 +84,8 @@ import java.util.List;
  * 
  */
 public class CalDavCalendarCollection extends AbstractDavObjectCollection<Calendar> implements CalendarCollection {
+
+    private static final org.apache.commons.logging.Log LOG = LogFactory.getLog(CalDavCalendarCollection.class);
     
     /**
      * Only {@link CalDavCalendarStore} should be calling this, so default modifier is applied.
@@ -378,12 +382,12 @@ public class CalDavCalendarCollection extends AbstractDavObjectCollection<Calend
         writeCalendarOnServer(uri, calendar, false);
     }
 
-    public void writeCalendarOnServer(Calendar calendar, boolean isNew) throws ObjectStoreException, ConstraintViolationException {
+    public String writeCalendarOnServer(Calendar calendar, boolean isNew) throws ObjectStoreException, ConstraintViolationException {
         Uid uid = Calendars.getUid(calendar);
-        writeCalendarOnServer(defaultUriFromUid(uid.getValue()), calendar, isNew);
+        return writeCalendarOnServer(defaultUriFromUid(uid.getValue()), calendar, isNew);
     }
 
-    public void writeCalendarOnServer(String uri, Calendar calendar, boolean isNew) throws ObjectStoreException {
+    public String writeCalendarOnServer(String uri, Calendar calendar, boolean isNew) throws ObjectStoreException {
         String path = getPath();
         if (!path.endsWith("/")) {
             path = path.concat("/");
@@ -393,7 +397,8 @@ public class CalDavCalendarCollection extends AbstractDavObjectCollection<Calend
         if (isNew) {
             putMethod.addHeader("If-None-Match", "*");
         } else {
-            putMethod.addHeader("If-Match", "*");
+            // this doesn't work for iCloud - you need to provide the actual ETag which we don't store atm
+            // putMethod.addHeader("If-Match", "*");
         }
         // putMethod.setRequestBody(calendar);
 
@@ -410,6 +415,26 @@ public class CalDavCalendarCollection extends AbstractDavObjectCollection<Calend
                     && (httpResponse.getStatusLine().getStatusCode() != DavServletResponse.SC_NO_CONTENT)) {
                 throw new ObjectStoreException("Error creating calendar on server: " + httpResponse.getStatusLine());
             }
+            // get Etag and Schedule-Tag headers and store them locally
+            Header etagHeader = httpResponse.getFirstHeader("ETag");
+            if (etagHeader == null) {
+                LOG.error("ETag header not found in response for URI: " + uri);
+                return null;
+            } else {
+                String etag = etagHeader.getValue();
+                LOG.debug("ETag header found in response for uri: " + uri + " - " + etag);
+                // also log X-Apple-Request-UUID and via header
+                Header appleRequestUUIDHeader = httpResponse.getFirstHeader("X-Apple-Request-UUID");
+                if (appleRequestUUIDHeader != null) {
+                    LOG.debug("X-Apple-Request-UUID header found in response for uri: " + uri + " - " + appleRequestUUIDHeader.getValue());
+                }
+                Header viaHeader = httpResponse.getFirstHeader("via");
+                if (viaHeader != null) {
+                    LOG.debug("via header found in response for uri: " + uri + " - " + viaHeader.getValue());
+                }
+                return etag;
+            }
+
         } catch (IOException ioe) {
             throw new ObjectStoreException("Error creating calendar on server", ioe);
         }

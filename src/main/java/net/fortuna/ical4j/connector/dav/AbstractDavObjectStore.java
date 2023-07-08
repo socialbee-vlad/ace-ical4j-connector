@@ -62,6 +62,8 @@ public abstract class AbstractDavObjectStore<C extends ObjectCollection<?>> impl
 	private final URL rootUrl;
 	
 	private List<SupportedFeature> supportedFeatures;
+
+    private String userId;
 	
     /**
      * Server implementation-specific path resolution.
@@ -78,6 +80,11 @@ public abstract class AbstractDavObjectStore<C extends ObjectCollection<?>> impl
         this.clientFactory = new DavClientFactory("true".equals(Configurator.getProperty("ical4j.connector.dav.preemptiveauth").orElse("false")));
     }
 
+    public AbstractDavObjectStore(URL url, PathResolver pathResolver, String userId) {
+        this(url, pathResolver);
+        this.userId = userId;
+    }
+
     /**
      * @return the path
      */
@@ -89,8 +96,15 @@ public abstract class AbstractDavObjectStore<C extends ObjectCollection<?>> impl
      * {@inheritDoc}
      */
     public final boolean connect() throws ObjectStoreException {
-        final String principalPath = pathResolver.getPrincipalPath(getUserName());
-        final String userPath = pathResolver.getUserPath(getUserName());
+        final String principalPath;
+        final String userPath;
+        if (pathResolver.equals(PathResolver.ICLOUD)) {
+            principalPath = pathResolver.getPrincipalPath(userId);
+            userPath = pathResolver.getUserPath(userId);
+        } else {
+            principalPath = pathResolver.getPrincipalPath(getUserName());
+            userPath = pathResolver.getUserPath(getUserName());
+        }
         davClient = clientFactory.newInstance(rootUrl, principalPath, userPath);
         davClient.begin();
 
@@ -123,9 +137,20 @@ public abstract class AbstractDavObjectStore<C extends ObjectCollection<?>> impl
     	try {
             this.username = username;
         	
-        	final String principalPath = pathResolver.getPrincipalPath(username);
-        	final String userPath = pathResolver.getUserPath(username);
-        	davClient = clientFactory.newInstance(rootUrl, principalPath, userPath);
+        	final String principalPath;
+            final String userPath;
+
+            if (pathResolver.equals(PathResolver.ICLOUD)) {
+//                principalPath = pathResolver.getPrincipalPath(userId);
+//                userPath = pathResolver.getUserPath(userId);
+                principalPath = "";
+                userPath = "";
+            } else {
+                principalPath = pathResolver.getPrincipalPath(username);
+                userPath = pathResolver.getUserPath(username);
+            }
+
+            davClient = clientFactory.newInstance(rootUrl, principalPath, userPath);
         	supportedFeatures = davClient.begin(username, password);
     	}
     	catch (IOException ioe) {
@@ -183,5 +208,14 @@ public abstract class AbstractDavObjectStore<C extends ObjectCollection<?>> impl
     public boolean isSupportCalendarProxy() {
         return supportedFeatures.contains(SupportedFeature.CALENDAR_PROXY) ? true: false;
     }
-    
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
+    }
+
+
 }
