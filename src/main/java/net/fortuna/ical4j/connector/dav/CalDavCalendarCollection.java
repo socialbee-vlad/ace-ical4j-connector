@@ -492,7 +492,12 @@ public class CalDavCalendarCollection extends AbstractDavObjectCollection<Calend
     public Calendar removeCalendarFromUri(String uri) throws FailedOperationException, ObjectStoreException, ObjectNotFoundException {
         Calendar calendar = getCalendarFromUri(uri);
 
-        HttpDelete deleteMethod = new HttpDelete(getPath() + "/" + uri);
+        String path = getPath();
+        if (path.endsWith("/")) {
+            // remove trailing slash or else the delete will fail in iCloud due to double slashes
+            path = path.substring(0, path.length() - 1);
+        }
+        HttpDelete deleteMethod = new HttpDelete(path + "/" + uri);
         HttpResponse httpResponse;
         try {
             httpResponse = getStore().getClient().execute(deleteMethod);
